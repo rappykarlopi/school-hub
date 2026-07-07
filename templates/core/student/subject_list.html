@@ -1,0 +1,170 @@
+{% extends "core/base.html" %}
+{% block title %}Enlist Subjects – LBYCPG3{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-slate-900">Enlist Subjects</h1>
+  <p class="text-slate-500 text-sm mt-1">
+    {% if term %}
+      Active Term: <span class="font-semibold text-blue-700">{{ term.term_name }}</span>
+      · Select subjects to add to your cart.
+    {% else %}
+      No active enrollment term.
+    {% endif %}
+  </p>
+</div>
+
+{% if not term %}
+<div class="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+  <p class="text-amber-800 font-medium">No active enrollment term.</p>
+</div>
+{% else %}
+
+<!-- Search bar -->
+<form method="get" action="{% url 'subject_list' %}" class="mb-6">
+  <div class="flex gap-3">
+    <div class="relative flex-1">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"
+           fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z"/>
+      </svg>
+      <input type="text" name="q" value="{{ query }}"
+        placeholder="Search by subject code, title, or faculty name…"
+        class="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm
+               focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white">
+    </div>
+    <button type="submit"
+      class="bg-blue-700 hover:bg-blue-600 text-white text-sm font-semibold
+             px-5 py-2.5 rounded-lg transition-colors">
+      Search
+    </button>
+    {% if query %}
+    <a href="{% url 'subject_list' %}"
+      class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium
+             px-4 py-2.5 rounded-lg transition-colors">
+      Clear
+    </a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Subject offerings table -->
+<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+  <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+    <h2 class="font-semibold text-slate-900">Available Sections</h2>
+    <span class="text-sm text-slate-500">{{ schedules|length }} section{{ schedules|length|pluralize }} found</span>
+  </div>
+
+  {% if schedules %}
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="text-left px-6 py-3 font-medium">Subject</th>
+          <th class="text-left px-6 py-3 font-medium">Faculty</th>
+          <th class="text-left px-6 py-3 font-medium">Schedule</th>
+          <th class="text-left px-6 py-3 font-medium">Room</th>
+          <th class="text-center px-6 py-3 font-medium">Units</th>
+          <th class="text-center px-6 py-3 font-medium">Slots</th>
+          <th class="text-center px-6 py-3 font-medium">Prerequisite</th>
+          <th class="px-6 py-3"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for sched in schedules %}
+        {% with in_cart=sched.pk|stringformat:"i" %}
+        <tr class="hover:bg-slate-50 transition-colors
+          {% if sched.pk in enrolled_schedule_ids %}bg-green-50{% endif %}">
+
+          <!-- Subject info -->
+          <td class="px-6 py-4">
+            <p class="font-semibold text-slate-900">{{ sched.subject.subject_code }}</p>
+            <p class="text-slate-500 text-xs mt-0.5">{{ sched.subject.subject_title }}</p>
+          </td>
+
+          <!-- Faculty -->
+          <td class="px-6 py-4 text-slate-700">{{ sched.faculty.full_name }}</td>
+
+          <!-- Schedule -->
+          <td class="px-6 py-4">
+            <p class="font-medium text-slate-800">{{ sched.get_day_display }}</p>
+            <p class="text-slate-500 text-xs">
+              {{ sched.time_start|time:"g:i A" }} – {{ sched.time_end|time:"g:i A" }}
+            </p>
+          </td>
+
+          <!-- Room -->
+          <td class="px-6 py-4 text-slate-600">{{ sched.room.room_name }}</td>
+
+          <!-- Units -->
+          <td class="px-6 py-4 text-center font-semibold text-slate-800">{{ sched.subject.units }}</td>
+
+          <!-- Slots -->
+          <td class="px-6 py-4 text-center">
+            {% if sched.available_slots <= 0 %}
+              <span class="inline-block bg-red-100 text-red-700 text-xs font-semibold px-2 py-1 rounded-full">Full</span>
+            {% elif sched.available_slots <= 5 %}
+              <span class="inline-block bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-1 rounded-full">
+                {{ sched.available_slots }} left
+              </span>
+            {% else %}
+              <span class="text-green-700 font-medium">{{ sched.available_slots }}</span>
+            {% endif %}
+          </td>
+
+          <!-- Prerequisite -->
+          <td class="px-6 py-4 text-center text-xs text-slate-500">
+            {% if sched.subject.prerequisite %}
+              {{ sched.subject.prerequisite.subject_code }}
+            {% else %}
+              <span class="text-slate-300">None</span>
+            {% endif %}
+          </td>
+
+          <!-- Action -->
+          <td class="px-6 py-4 text-right">
+            {% if sched.pk in enrolled_schedule_ids %}
+              <span class="inline-flex items-center gap-1 text-xs font-semibold
+                           text-green-700 bg-green-100 px-3 py-1.5 rounded-lg">
+                ✓ Added
+              </span>
+            {% elif sched.available_slots <= 0 %}
+              <span class="text-xs text-slate-400 font-medium">Section Full</span>
+            {% else %}
+              <form method="post" action="{% url 'add_to_cart' sched.pk %}">
+                {% csrf_token %}
+                <button type="submit"
+                  class="bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold
+                         px-3 py-1.5 rounded-lg transition-colors">
+                  + Add to Cart
+                </button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endwith %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="px-6 py-16 text-center">
+    <p class="text-slate-400">
+      {% if query %}No subjects found matching "{{ query }}".
+      {% else %}No subjects are offered for this term yet.{% endif %}
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Back to dashboard -->
+<div class="mt-4">
+  <a href="{% url 'student_dashboard' %}"
+    class="text-sm text-blue-700 hover:underline font-medium">
+    ← Back to Dashboard
+  </a>
+</div>
+
+{% endif %}
+{% endblock %}

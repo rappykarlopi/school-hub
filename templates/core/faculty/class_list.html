@@ -1,0 +1,87 @@
+{% extends "core/base.html" %}
+{% block title %}Class Lists – LBYCPG3{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-slate-900">Class Lists</h1>
+  <p class="text-slate-500 text-sm mt-1">
+    {{ faculty.full_name }} · {{ faculty.department }}
+    {% if term %} · <span class="font-semibold text-blue-700">{{ term.term_name }}</span>{% endif %}
+  </p>
+</div>
+
+{% if not term %}
+<div class="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+  <p class="text-amber-800 font-medium">No active term.</p>
+</div>
+{% elif not sections %}
+<div class="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-sm">
+  <p class="text-slate-400 text-sm">No sections assigned for this term.</p>
+</div>
+{% else %}
+
+<div class="space-y-6">
+  {% for sec in sections %}
+  <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <!-- Section header -->
+    <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between">
+      <div>
+        <h2 class="font-bold text-slate-900">
+          {{ sec.schedule.subject.subject_code }}
+          <span class="font-normal text-slate-600">– {{ sec.schedule.subject.subject_title }}</span>
+        </h2>
+        <p class="text-sm text-slate-500 mt-0.5">
+          {{ sec.schedule.get_day_display }}
+          · {{ sec.schedule.time_start|time:"g:i A" }} – {{ sec.schedule.time_end|time:"g:i A" }}
+          · {{ sec.schedule.room.room_name }}
+        </p>
+      </div>
+      <div class="text-right shrink-0 ml-4">
+        <span class="inline-block bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-full">
+          {{ sec.count }} / {{ sec.schedule.total_slots }} enrolled
+        </span>
+        <p class="text-xs text-slate-400 mt-1">{{ sec.schedule.subject.units }} units</p>
+      </div>
+    </div>
+
+    <!-- Student list -->
+    {% if sec.students %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-white text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+          <tr>
+            <th class="text-left px-6 py-2.5 font-medium">#</th>
+            <th class="text-left px-6 py-2.5 font-medium">Student No.</th>
+            <th class="text-left px-6 py-2.5 font-medium">Last Name</th>
+            <th class="text-left px-6 py-2.5 font-medium">First Name</th>
+            <th class="text-left px-6 py-2.5 font-medium">Program</th>
+            <th class="text-left px-6 py-2.5 font-medium">Date Enrolled</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for enr in sec.students %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-6 py-3 text-slate-400">{{ forloop.counter }}</td>
+            <td class="px-6 py-3 font-mono text-xs text-slate-700 font-medium">
+              {{ enr.student.student_number }}
+            </td>
+            <td class="px-6 py-3 font-semibold text-slate-900">{{ enr.student.last_name }}</td>
+            <td class="px-6 py-3 text-slate-700">{{ enr.student.first_name }}</td>
+            <td class="px-6 py-3 text-slate-500 text-xs">{{ enr.student.program }}</td>
+            <td class="px-6 py-3 text-slate-500 text-xs">{{ enr.enrolled_at|date:"M j, Y" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="px-6 py-8 text-center">
+      <p class="text-slate-400 text-sm italic">No students enrolled in this section yet.</p>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% endif %}
+{% endblock %}

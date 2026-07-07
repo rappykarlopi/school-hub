@@ -1,0 +1,167 @@
+{% extends "core/base.html" %}
+{% block title %}Student Dashboard – LBYCPG3{% endblock %}
+
+{% block content %}
+<!-- Page header -->
+<div class="flex items-start justify-between mb-8">
+  <div>
+    <h1 class="text-2xl font-bold text-slate-900">Good day, {{ student.first_name }}!</h1>
+    <p class="text-slate-500 text-sm mt-1">
+      {{ student.student_number }} · {{ student.program }}
+      {% if term %} · <span class="font-medium text-blue-700">{{ term.term_name }}</span>{% endif %}
+    </p>
+  </div>
+  <a href="{% url 'subject_list' %}"
+    class="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-600 text-white
+           text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors shadow-sm">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+    </svg>
+    Enlist Subjects
+  </a>
+</div>
+
+{% if not term %}
+<div class="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+  <p class="text-amber-800 font-medium">⚠ No active enrollment term at this time.</p>
+  <p class="text-amber-600 text-sm mt-1">Please check back later or contact the Registrar's Office.</p>
+</div>
+{% else %}
+
+<!-- Stats cards -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+  <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+    <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Confirmed Units</p>
+    <p class="text-3xl font-bold text-blue-700">{{ total_confirmed_units }}</p>
+  </div>
+  <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+    <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">In Cart</p>
+    <p class="text-3xl font-bold text-amber-600">{{ total_cart_units }}</p>
+  </div>
+  <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+    <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Confirmed Subjects</p>
+    <p class="text-3xl font-bold text-green-700">{{ confirmed_enrollments|length }}</p>
+  </div>
+  <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+    <p class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Cart Items</p>
+    <p class="text-3xl font-bold text-slate-700">{{ cart_enrollments|length }}</p>
+  </div>
+</div>
+
+<!-- Cart Section -->
+{% if cart_enrollments %}
+<div class="bg-white rounded-xl border border-amber-200 shadow-sm mb-6">
+  <div class="flex items-center justify-between px-6 py-4 border-b border-amber-100">
+    <div class="flex items-center gap-2">
+      <span class="text-amber-500 text-lg">🛒</span>
+      <h2 class="font-semibold text-slate-900">Enlistment Cart</h2>
+      <span class="bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+        {{ cart_enrollments|length }} subject{{ cart_enrollments|length|pluralize }}
+      </span>
+    </div>
+    <form method="post" action="{% url 'confirm_enlistment' %}"
+          onsubmit="return confirm('Confirm enlistment for all {{ cart_enrollments|length }} subject(s)?')">
+      {% csrf_token %}
+      <button type="submit"
+        class="bg-green-700 hover:bg-green-600 text-white text-sm font-semibold
+               px-4 py-2 rounded-lg transition-colors">
+        ✓ Confirm All Enlistment
+      </button>
+    </form>
+  </div>
+
+  <div class="divide-y divide-slate-100">
+    {% for enr in cart_enrollments %}
+    <div class="flex items-center justify-between px-6 py-4">
+      <div class="flex-1">
+        <p class="font-semibold text-slate-900 text-sm">
+          {{ enr.schedule.subject.subject_code }}
+          <span class="font-normal text-slate-500">– {{ enr.schedule.subject.subject_title }}</span>
+        </p>
+        <p class="text-xs text-slate-500 mt-0.5">
+          {{ enr.schedule.get_day_display }} · {{ enr.schedule.time_start|time:"g:i A" }} – {{ enr.schedule.time_end|time:"g:i A" }}
+          · {{ enr.schedule.room.room_name }}
+          · {{ enr.schedule.faculty.full_name }}
+        </p>
+      </div>
+      <div class="flex items-center gap-3 ml-4">
+        <span class="text-sm text-slate-600 font-medium">{{ enr.schedule.subject.units }} units</span>
+        <form method="post" action="{% url 'remove_from_cart' enr.pk %}">
+          {% csrf_token %}
+          <button type="submit"
+            class="text-red-500 hover:text-red-700 text-xs font-medium px-2 py-1
+                   rounded hover:bg-red-50 transition-colors">
+            Remove
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="px-6 py-3 bg-amber-50 rounded-b-xl border-t border-amber-100 flex justify-end">
+    <p class="text-sm text-slate-600">
+      Total in cart: <span class="font-bold text-amber-700">{{ total_cart_units }} units</span>
+    </p>
+  </div>
+</div>
+{% endif %}
+
+<!-- Confirmed Enrollments -->
+<div class="bg-white rounded-xl border border-slate-200 shadow-sm">
+  <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
+    <span class="text-green-600 text-lg">✓</span>
+    <h2 class="font-semibold text-slate-900">Confirmed Enrollments</h2>
+    {% if confirmed_enrollments %}
+    <span class="bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+      {{ confirmed_enrollments|length }} subject{{ confirmed_enrollments|length|pluralize }}
+    </span>
+    {% endif %}
+  </div>
+
+  {% if confirmed_enrollments %}
+  <div class="divide-y divide-slate-100">
+    {% for enr in confirmed_enrollments %}
+    <div class="flex items-center justify-between px-6 py-4">
+      <div>
+        <p class="font-semibold text-slate-900 text-sm">
+          {{ enr.schedule.subject.subject_code }}
+          <span class="font-normal text-slate-500">– {{ enr.schedule.subject.subject_title }}</span>
+        </p>
+        <p class="text-xs text-slate-500 mt-0.5">
+          {{ enr.schedule.get_day_display }} · {{ enr.schedule.time_start|time:"g:i A" }} – {{ enr.schedule.time_end|time:"g:i A" }}
+          · {{ enr.schedule.room.room_name }}
+          · {{ enr.schedule.faculty.full_name }}
+        </p>
+      </div>
+      <div class="text-right ml-4">
+        <span class="text-sm font-semibold text-slate-700">{{ enr.schedule.subject.units }} units</span>
+        <br>
+        <span class="text-xs text-green-600 font-medium">Confirmed</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="px-6 py-3 bg-green-50 rounded-b-xl border-t border-green-100 flex items-center justify-between">
+    <a href="{% url 'enrollment_form' %}"
+      class="text-sm text-blue-700 hover:text-blue-900 font-medium hover:underline">
+      🖨 Print Enrollment Form →
+    </a>
+    <p class="text-sm text-slate-600">
+      Total enrolled: <span class="font-bold text-green-700">{{ total_confirmed_units }} units</span>
+    </p>
+  </div>
+  {% else %}
+  <div class="px-6 py-12 text-center">
+    <p class="text-slate-400 text-sm">No confirmed enrollments yet for this term.</p>
+    <a href="{% url 'subject_list' %}"
+      class="inline-block mt-3 text-blue-700 text-sm font-medium hover:underline">
+      Browse available subjects →
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+{% endif %}
+{% endblock %}
