@@ -1,6 +1,6 @@
 # LBYCPG3 — Computer Engineering Enlistment and Scheduler System
 
-A web-based student enlistment and class scheduling system built for the Computer Engineering department. Supports three user roles (Admin, Faculty, Student), a 10-step enlistment workflow, conflict detection, three types of prerequisite checking, and a printable enrollment form.
+A web-based student enlistment and class scheduling system built for the Computer Engineering department. Supports three user roles (Admin, Faculty, Student), a 10-step enlistment workflow, conflict detection, three types of prerequisite checking, and a downloadable enrollment-form PDF.
 
 ---
 
@@ -13,7 +13,7 @@ A web-based student enlistment and class scheduling system built for the Compute
 5. [User Roles & Access](#user-roles--access)
 6. [URL Reference](#url-reference)
 7. [Database Models](#database-models)
-8. [Prerequisite System](#prereq`uisite-system)
+8. [Prerequisite System](#prerequisite-system)
 9. [Enlistment Workflow (10 Steps)](#enlistment-workflow-10-steps)
 10. [Validation Engine](#validation-engine)
 11. [Admin Panel](#admin-panel)
@@ -34,8 +34,13 @@ A web-based student enlistment and class scheduling system built for the Compute
 | CSS Framework | Tailwind CSS via CDN (no build step) |
 | Auth | Django built-in `AbstractUser` with role extension |
 | Fonts | Inter (Google Fonts, loaded via CDN) |
+| PDF Export | ReportLab |
 
-No additional packages are required beyond Django itself.
+Install the PDF dependency with:
+
+```bash
+pip install reportlab
+```
 
 ---
 
@@ -112,7 +117,7 @@ python manage.py migrate
 python seed_data.py
 ```
 
-This creates 1 admin, 3 faculty members, 3 students, 7 subjects, 6 rooms, 1 active academic term, and 7 schedule sections. It is safe to run multiple times — it uses `get_or_create` throughout and will not duplicate records.
+This creates 1 admin, 3 faculty members, 3 students, 8 subjects (including a co-requisite example), 6 rooms, 1 active academic term, and 8 schedule sections. It is safe to run multiple times — it uses `get_or_create` throughout and will not duplicate records.
 
 ### 6. Start the development server
 
@@ -169,7 +174,7 @@ The system uses Django's built-in authentication extended with a `role` field on
 - Adds subjects to cart (with live validation)
 - Confirms enlistment atomically
 - Views their confirmed weekly schedule
-- Prints their official enrollment form
+- Downloads their official enrollment form as a PDF
 
 Access to the wrong role's views redirects back to the login page with an error message.
 
@@ -194,7 +199,8 @@ Access to the wrong role's views redirects back to the login page with an error 
 | `/student/cart/remove/<id>/` | `remove_from_cart` | POST — remove an item from cart |
 | `/student/confirm/` | `confirm_enlistment` | POST — confirm all cart items atomically |
 | `/student/schedule/` | `student_schedule` | Weekly schedule grid (confirmed only) |
-| `/student/enrollment-form/` | `enrollment_form` | Printable enrollment form |
+| `/student/enrollment-form/` | `enrollment_form` | Enrollment form page |
+| `/student/enrollment-form/pdf/` | `enrollment_form_pdf` | Downloads the enrollment form as a PDF |
 
 ### Faculty
 
@@ -226,7 +232,7 @@ One-to-one profile linked to a `User` with role `faculty`. Stores `first_name`, 
 One-to-one profile linked to a `User` with role `student`. Stores `student_number` (unique), `first_name`, `last_name`, and `program`.
 
 ### Subject
-Stores `subject_code` (unique), `subject_title`, `units`, a self-referential `prerequisite` FK, and `prereq_type` (see [Prerequisite System](#prerequisite-system) below).
+Stores `subject_code` (unique), `subject_title`, `units`, a self-referential `prerequisite` FK, and `prerequisite_type` (see [Prerequisite System](#prerequisite-system) below).
 
 ### Room
 Stores `room_name` (unique) and `capacity`.
@@ -244,7 +250,7 @@ Links a `student` to a `schedule` with a `status` of either `Cart` or `Confirmed
 
 ## Prerequisite System
 
-Set per-subject in the `prerequisite` and `prereq_type` fields on the `Subject` model. There are three types:
+Set per-subject in the `prerequisite` and `prerequisite_type` fields on the `Subject` model. There are three types:
 
 ### Hard Prerequisite
 The student must have a `Confirmed` enrollment record for the prerequisite subject from any past or current term before they can enlist in this subject. This represents a subject that must be passed first.
@@ -257,11 +263,11 @@ The student must have a `Confirmed` enrollment record for the prerequisite subje
 Example: A student who failed `ENGMATH1` last term can still enlist in `ENGMATH2` this term, because they have taken it before.
 
 ### Co-requisite
-The prerequisite subject must be in the student's cart or already confirmed for the **same active term**. Both subjects must be enrolled together. You cannot add the co-requisite subject to your cart without the linked subject also being in your cart/enrollment for that term.
+The prerequisite subject must be in the student's cart or already confirmed for the **same active term**. Both subjects must be enrolled together. The rule is enforced when the student clicks **Confirm All Enlistment**, so the full cart is validated as a set.
 
-Example: A laboratory subject requires its paired lecture subject to be enrolled in the same term. The lecture does not require the lab, but the lab cannot be enlisted without the lecture.
+Example: A laboratory subject requires its paired lecture subject to be enrolled in the same term. The lecture does not require the lab, but the lab cannot be confirmed without the lecture.
 
-To configure in the admin panel: go to **Subjects**, select a subject, set the `Prerequisite` field and the `Prereq Type` dropdown accordingly.
+To configure in the admin panel: go to **Subjects**, select a subject, set the `Prerequisite` field and the `Prerequisite Type` dropdown accordingly.
 
 ---
 
@@ -275,21 +281,21 @@ This follows the project specification exactly.
 | 2 | Active term is auto-resolved | `_get_active_term()` helper, used across all student views |
 | 3 | Student views available subjects | `subject_list` view — shows all Schedule offerings for the active term |
 | 4 | Student selects a desired subject | "Add to Cart" button on the subject list page |
-| 5 | System checks prerequisites and conflicts | `Enrollment.clean()` runs prerequisite check, duplicate check, and time-overlap check |
+| 5 | System checks prerequisites and conflicts | Hard/soft prerequisite checks run as the subject is added; the full cart is validated on confirmation for prerequisites, co-requisites, duplicates, conflicts, and slot availability |
 | 6 | Subject added to enlistment cart | `add_to_cart` view creates `Enrollment` with `status='Cart'` |
 | 7 | Student confirms enlistment | "Confirm All Enlistment" button on the dashboard |
 | 8 | System updates available slots | `confirm_enlistment` view uses `transaction.atomic()` + `SELECT FOR UPDATE` to decrement `available_slots` safely |
 | 9 | Enrollment record generated | All cart items flipped to `status='Confirmed'` inside the same transaction |
-| 10 | Student prints enrollment form | `enrollment_form` view renders a printable page with all confirmed subjects |
+| 10 | Student downloads enrollment form | `enrollment_form` and `enrollment_form_pdf` render the official record and PDF export |
 
 ---
 
 ## Validation Engine
 
-All validation runs inside `Enrollment.clean()` in `models.py`. It executes four checks in order every time an enrollment is saved.
+Validation is handled in `Enrollment.clean()` and the confirmation-time cart validator in `models.py`. The app checks the full cart before enrollment is confirmed.
 
 **Check 1 — Prerequisite (type-aware)**
-Calls `_check_prerequisite()` which branches on `subject.prereq_type`. Raises a descriptive error explaining exactly which subject is missing and what type of requirement it is.
+Branches on `subject.prerequisite_type` for hard, soft, and co-requisite rules. Each case raises a descriptive error explaining which subject is missing and what type of requirement it is.
 
 **Check 2 — Duplicate subject in same term**
 Prevents a student from adding the same subject code twice in one term (even across different sections). Checks both `Cart` and `Confirmed` statuses.
@@ -300,7 +306,7 @@ Uses the overlap formula `start_A < end_B AND end_A > start_B` to detect any sch
 **Check 4 — Slot availability**
 Only triggers when `status='Confirmed'`. Ensures `available_slots > 0` before confirming. The actual decrement in `confirm_enlistment` also uses `SELECT FOR UPDATE` to handle concurrent requests safely.
 
-If any check fails, a `ValidationError` is raised. The view catches it and displays the error as a flash message — no data is written to the database.
+If any check fails, the confirmation is blocked and the error is shown as a flash message — no data is written to the database.
 
 ---
 
@@ -351,7 +357,7 @@ Search bar (filters by subject code, title, faculty name), a full table of all S
 Day-by-day accordion list showing confirmed enrollments grouped by weekday. Uses the `dict_key` custom template filter to access the `schedule_by_day` dictionary.
 
 ### student/enrollment_form.html
-Print-ready document with university header, student info block, enrolled subjects table with totals, and signature lines. A print button calls `window.print()`. Navigation and buttons are hidden via `@media print` CSS.
+Print-ready document with university header, student info block, enrolled subjects table with totals, and signature lines. A download button exports the form as a PDF, while the page also supports browser printing.
 
 ### faculty/dashboard.html
 Teaching load stat cards, a unit utilization progress bar (`widthratio` tag), and a summary table of all assigned sections.
@@ -373,7 +379,7 @@ Accordion of sections, each with a full student roster table (student number, na
 - 3 faculty members (`faculty1`, `faculty2`, `faculty3`) — Maria Santos (CpE), Jose Reyes (CpE), Ricardo Cruz (Math)
 - 3 students (`student1`, `student2`, `student3`) — Ana Dela Cruz, Marco Bautista, Lena Garcia
 
-**Subjects (7 total)**
+**Subjects (8 total)**
 
 | Code | Title | Units | Prerequisite | Type |
 |---|---|---|---|---|
@@ -384,12 +390,13 @@ Accordion of sections, each with a full student roster table (student number, na
 | ENGMATH1 | Engineering Mathematics I | 3 | — | — |
 | ENGMATH2 | Engineering Mathematics II | 3 | ENGMATH1 | Soft |
 | DATASRUC | Data Structures | 3 | CMPE30A | Hard |
+| CMPE30AL | Computer Engineering I Lab | 1 | CMPE30A | Co-requisite |
 
 **Rooms:** GK101, GK102, GK103, LS202, LS203, AG1901
 
 **Active Term:** AY 2025-2026 Term 3
 
-**Schedules:** 7 sections spread across Monday through Saturday.
+**Schedules:** 8 sections spread across Monday through Saturday.
 
 ---
 
