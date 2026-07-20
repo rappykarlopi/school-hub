@@ -8,6 +8,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
 from django.db.models import Count, Sum, Q
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 from .models import (
     User, Faculty, Student, Subject,
     Room, AcademicTerm, Schedule, Enrollment,
@@ -20,13 +22,19 @@ from .models import (
 
 class FacultyInline(admin.StackedInline):
     model  = Faculty
-    extra  = 0
+    extra  = 1
+    max_num = 1
+    can_delete = False
+    verbose_name_plural = "Faculty Profile"
     fields = ("first_name", "last_name", "department", "max_teaching_load")
 
 
 class StudentInline(admin.StackedInline):
     model  = Student
-    extra  = 0
+    extra  = 1
+    max_num = 1
+    can_delete = False
+    verbose_name_plural = "Student Profile"
     fields = ("student_number", "first_name", "last_name", "program")
 
 
@@ -59,7 +67,35 @@ class UserAdmin(BaseUserAdmin):
     search_fields = ("username", "email", "first_name", "last_name")
     ordering      = ("username",)
 
-    # Conditionally show the appropriate inline
+    def get_fieldsets(self, request, obj=None):
+        """
+        Faculty/Student accounts don't need Django's is_staff/is_superuser/
+        groups/user_permissions section — that's only relevant for
+        `admin`-role accounts that actually log into this admin site.
+        Once the user is saved (obj exists) and isn't an admin, drop that
+        whole fieldset so the follow-up screen only shows what matters:
+        personal info, role, and the Faculty/Student profile below it.
+        """
+        fieldsets = super().get_fieldsets(request, obj)
+
+        if obj is not None and obj.role != User.Role.ADMIN:
+            fieldsets = tuple(
+                (name, opts)
+                for name, opts in fieldsets
+                if "groups" not in opts.get("fields", ())
+                and "user_permissions" not in opts.get("fields", ())
+            )
+
+        return fieldsets
+
+    # Conditionally show the appropriate inline.
+    #
+    # On the Add page (obj is None) the User doesn't have a role committed
+    # yet, so no profile inline is shown there. response_add() below
+    # immediately redirects the admin into the Change page right after
+    # the User is created — and THAT page shows exactly the one inline
+    # matching the role just chosen (Faculty or Student), ready to fill
+    # in. No second manual lookup required.
     def get_inlines(self, request, obj=None):
         if obj is None:
             return []
@@ -68,6 +104,39 @@ class UserAdmin(BaseUserAdmin):
         if obj.role == User.Role.STUDENT:
             return [StudentInline]
         return []
+
+    def response_add(self, request, obj, post_url_continue=None):
+        """
+        After creating a new User, skip the changelist and go straight to
+        the Change page for that user whenever a profile row (Faculty or
+        Student) still needs to be filled in — so the admin lands right
+        on the correct, decluttered form instead of hunting for the
+        record again.
+
+        "Save and add another" / "Save and continue editing" keep their
+        normal Django behavior.
+        """
+        if "_addanother" not in request.POST and "_continue" not in request.POST:
+            profile_required = obj.role in (User.Role.FACULTY, User.Role.STUDENT)
+            profile_exists = (
+                (obj.role == User.Role.FACULTY and Faculty.objects.filter(user=obj).exists())
+                or (obj.role == User.Role.STUDENT and Student.objects.filter(user=obj).exists())
+            )
+            if profile_required and not profile_exists:
+                self.message_user(
+                    request,
+                    f"User '{obj}' was created. Now complete the "
+                    f"{obj.get_role_display()} profile below.",
+                )
+                opts = self.model._meta
+                redirect_url = reverse(
+                    f"admin:{opts.app_label}_{opts.model_name}_change",
+                    args=(obj.pk,),
+                    current_app=self.admin_site.name,
+                )
+                return HttpResponseRedirect(redirect_url)
+
+        return super().response_add(request, obj, post_url_continue)
 
 
 # ─────────────────────────────────────────────
