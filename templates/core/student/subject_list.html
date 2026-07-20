@@ -12,6 +12,13 @@
       No active enrollment term.
     {% endif %}
   </p>
+  {% if term %}
+  <p class="text-slate-400 text-xs mt-1">
+    Showing
+    <span class="font-semibold text-slate-600">{{ term_number }}</span>
+    subjects, as configured for the active term by the administrator.
+  </p>
+  {% endif %}
 </div>
 
 {% if not term %}
@@ -65,6 +72,7 @@
           <th class="text-left px-6 py-3 font-medium">Faculty</th>
           <th class="text-left px-6 py-3 font-medium">Schedule</th>
           <th class="text-left px-6 py-3 font-medium">Room</th>
+          <th class="text-center px-6 py-3 font-medium">Term</th>
           <th class="text-center px-6 py-3 font-medium">Units</th>
           <th class="text-center px-6 py-3 font-medium">Slots</th>
           <th class="text-center px-6 py-3 font-medium">Prerequisite</th>
@@ -96,6 +104,13 @@
 
           <!-- Room -->
           <td class="px-6 py-4 text-slate-600">{{ sched.room.room_name }}</td>
+
+          <!-- Term -->
+          <td class="px-6 py-4 text-center">
+            <span class="inline-block bg-blue-50 text-blue-700 text-xs font-semibold px-2 py-1 rounded-full">
+              {{ sched.subject.get_term_number_display }}
+            </span>
+          </td>
 
           <!-- Units -->
           <td class="px-6 py-4 text-center font-semibold text-slate-800">{{ sched.subject.units }}</td>
@@ -152,7 +167,7 @@
   <div class="px-6 py-16 text-center">
     <p class="text-slate-400">
       {% if query %}No subjects found matching "{{ query }}".
-      {% else %}No subjects are offered for this term yet.{% endif %}
+      {% else %}No {{ term_number }} subjects are offered for this term yet.{% endif %}
     </p>
   </div>
   {% endif %}

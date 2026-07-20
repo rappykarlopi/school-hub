@@ -186,7 +186,7 @@ def subject_list(request):
     if term:
         schedules = (
             Schedule.objects
-            .filter(term=term)
+            .filter(term=term, subject__term_number=term.term_number)
             .select_related("subject", "faculty", "room", "term")
             .order_by("subject__subject_code", "day", "time_start")
         )
@@ -210,6 +210,7 @@ def subject_list(request):
         "schedules":             schedules,
         "enrolled_schedule_ids": enrolled_schedule_ids,
         "query":                 query,
+        "term_number":           term.get_term_number_display() if term else None,
     }
     return render(request, "core/student/subject_list.html", context)
 
@@ -504,6 +505,7 @@ def enrollment_form_pdf(request):
             Paragraph("Schedule", heading_style),
             Paragraph("Room", heading_style),
             Paragraph("Faculty", heading_style),
+            Paragraph("Term", heading_style),
             Paragraph("Units", heading_style),
         ]]
 
@@ -518,12 +520,13 @@ def enrollment_form_pdf(request):
                 ),
                 Paragraph(enrollment.schedule.room.room_name, body_style),
                 Paragraph(enrollment.schedule.faculty.full_name, body_style),
+                Paragraph(enrollment.schedule.subject.get_term_number_display(), body_style),
                 Paragraph(str(enrollment.schedule.subject.units), body_style),
             ])
 
         subject_table = Table(
             table_data,
-            colWidths=[0.35 * inch, 0.75 * inch, 2.0 * inch, 1.15 * inch, 0.8 * inch, 1.15 * inch, 0.45 * inch],
+            colWidths=[0.35 * inch, 0.7 * inch, 1.85 * inch, 1.05 * inch, 0.7 * inch, 1.0 * inch, 0.6 * inch, 0.45 * inch],
         )
         subject_table.setStyle(
             TableStyle([

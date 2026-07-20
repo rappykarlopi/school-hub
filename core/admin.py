@@ -187,15 +187,29 @@ class StudentAdmin(admin.ModelAdmin):
 
 @admin.register(Subject)
 class SubjectAdmin(admin.ModelAdmin):
-    list_display  = ("subject_code", "subject_title", "units", "prerequisite_type", "prerequisite")
-    list_filter   = ("units", "prerequisite_type")
+    list_display  = (
+        "subject_code", "subject_title", "units",
+        "term_number",
+        "prerequisite_type", "prerequisite",
+    )
+    list_filter   = ("term_number", "units", "prerequisite_type")
     search_fields = ("subject_code", "subject_title")
-    ordering      = ("subject_code",)
+    ordering      = ("term_number", "subject_code")
     autocomplete_fields = ("prerequisite",)
 
     fieldsets = (
         (None, {
-            "fields": ("subject_code", "subject_title", "units", "prerequisite_type", "prerequisite")
+            "fields": ("subject_code", "subject_title", "units")
+        }),
+        ("Curriculum Placement", {
+            "fields": ("term_number",),
+            "description": (
+                "Determines when this subject is offered and which students can enlist in it. "
+                "Only administrators may change this value."
+            ),
+        }),
+        ("Prerequisites", {
+            "fields": ("prerequisite_type", "prerequisite")
         }),
     )
 
@@ -217,11 +231,21 @@ class RoomAdmin(admin.ModelAdmin):
 
 @admin.register(AcademicTerm)
 class AcademicTermAdmin(admin.ModelAdmin):
-    list_display  = ("term_name", "is_active_badge", "created_at")
-    list_filter   = ("is_active",)
+    list_display  = ("term_name", "term_number", "is_active_badge", "created_at")
+    list_filter   = ("term_number", "is_active")
     search_fields = ("term_name",)
     ordering      = ("-created_at",)
     actions       = ["make_active"]
+
+    fieldsets = (
+        (None, {
+            "fields": ("term_name", "term_number", "is_active"),
+            "description": (
+                "term_number determines which Subjects (by their own term_number) "
+                "students will see and be able to enlist in on the Enlist Subjects page."
+            ),
+        }),
+    )
 
     @admin.display(description="Active?", boolean=False)
     def is_active_badge(self, obj):

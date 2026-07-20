@@ -77,6 +77,9 @@
         <p class="font-semibold text-slate-900 text-sm">
           {{ enr.schedule.subject.subject_code }}
           <span class="font-normal text-slate-500">– {{ enr.schedule.subject.subject_title }}</span>
+          <span class="ml-1 inline-block bg-amber-100 text-amber-700 text-xs font-medium px-2 py-0.5 rounded-full align-middle">
+            {{ enr.schedule.subject.get_term_number_display }}
+          </span>
         </p>
         <p class="text-xs text-slate-500 mt-0.5">
           {{ enr.schedule.get_day_display }} · {{ enr.schedule.time_start|time:"g:i A" }} – {{ enr.schedule.time_end|time:"g:i A" }}
@@ -127,6 +130,9 @@
         <p class="font-semibold text-slate-900 text-sm">
           {{ enr.schedule.subject.subject_code }}
           <span class="font-normal text-slate-500">– {{ enr.schedule.subject.subject_title }}</span>
+          <span class="ml-1 inline-block bg-green-100 text-green-700 text-xs font-medium px-2 py-0.5 rounded-full align-middle">
+            {{ enr.schedule.subject.get_term_number_display }}
+          </span>
         </p>
         <p class="text-xs text-slate-500 mt-0.5">
           {{ enr.schedule.get_day_display }} · {{ enr.schedule.time_start|time:"g:i A" }} – {{ enr.schedule.time_end|time:"g:i A" }}

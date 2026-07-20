@@ -84,6 +84,13 @@ class Faculty(models.Model):
 #  3. STUDENT PROFILE
 # ─────────────────────────────────────────────
 
+class TermNumber(models.IntegerChoices):
+    """Shared by Subject and Student to implement trimestral enlistment access."""
+    TERM_1 = 1, "Term 1"
+    TERM_2 = 2, "Term 2"
+    TERM_3 = 3, "Term 3"
+
+
 class Student(models.Model):
     user           = models.OneToOneField(User, on_delete=models.CASCADE, related_name="student_profile")
     student_number = models.CharField(max_length=20, unique=True)
@@ -125,6 +132,13 @@ class Subject(models.Model):
     subject_code  = models.CharField(max_length=20, unique=True)
     subject_title = models.CharField(max_length=200)
     units         = models.PositiveSmallIntegerField(default=3)
+    term_number   = models.PositiveSmallIntegerField(
+        choices=TermNumber.choices,
+        default=TermNumber.TERM_1,
+        help_text="Which trimester of the curriculum this subject is normally offered in "
+                  "(e.g. Term 3), and which students may enlist in it. "
+                  "Set and changed only by the administrator.",
+    )
     prerequisite_type = models.CharField(
         max_length=20,
         choices=PrerequisiteType.choices,
@@ -143,10 +157,14 @@ class Subject(models.Model):
     class Meta:
         verbose_name = "Subject"
         verbose_name_plural = "Subjects"
-        ordering = ["subject_code"]
+        ordering = ["term_number", "subject_code"]
 
     def __str__(self):
         return f"{self.subject_code} – {self.subject_title}"
+
+    @property
+    def term_number_display(self):
+        return self.get_term_number_display()
 
 
 # ─────────────────────────────────────────────
@@ -172,6 +190,12 @@ class Room(models.Model):
 
 class AcademicTerm(models.Model):
     term_name    = models.CharField(max_length=60, unique=True)
+    term_number  = models.PositiveSmallIntegerField(
+        choices=TermNumber.choices,
+        default=TermNumber.TERM_1,
+        help_text="Which trimester this academic term represents. Students will only "
+                  "see and enlist in Subjects whose term_number matches this value.",
+    )
     is_active    = models.BooleanField(
         default=False,
         help_text="Only one term should be active at a time. "
@@ -338,6 +362,12 @@ class Enrollment(models.Model):
                     f"You already have '{subject.subject_code}' confirmed for this term."
                 )
 
+            if subject.term_number != item.schedule.term.term_number:
+                errors.append(
+                    f"'{subject.subject_code}' is a {subject.get_term_number_display()} subject, "
+                    f"but the active term is {item.schedule.term.get_term_number_display()}."
+                )
+
             if item.schedule.available_slots <= 0:
                 errors.append(
                     f"No available slots remaining for '{subject.subject_code}'."
@@ -398,9 +428,17 @@ class Enrollment(models.Model):
         if not hasattr(self, "student") or self.student_id is None:
             return
 
-        # ── 1. Prerequisite / Co-requisite check ─────────────────────────
+        # ── 1. Term access check ────────────────────────────────────────
         subject = self.schedule.subject
-        prereq  = subject.prerequisite
+
+        if subject.term_number != self.schedule.term.term_number:
+            errors["schedule"] = (
+                f"'{subject.subject_code}' is a {subject.get_term_number_display()} subject, "
+                f"but the active term is {self.schedule.term.get_term_number_display()}."
+            )
+
+        # ── 2. Prerequisite / Co-requisite check ─────────────────────────
+        prereq = subject.prerequisite
 
         if prereq is not None:
             if subject.prerequisite_type == Subject.PrerequisiteType.HARD:
@@ -416,7 +454,7 @@ class Enrollment(models.Model):
                         f"before enrolling in '{subject}'."
                     )
 
-        # ── 2. Duplicate subject check ────────────────────────────────────
+        # ── 3. Duplicate subject check ────────────────────────────────────
         # Prevent adding the same subject twice in the same term (different section)
         same_subject_qs = Enrollment.objects.filter(
             student=self.student,
@@ -431,7 +469,7 @@ class Enrollment(models.Model):
                 f"You already have '{subject.subject_code}' in your cart or schedule for this term."
             ))
 
-        # ── 3. Slot availability (only when confirming) ───────────────────
+        # ── 4. Slot availability (only when confirming) ───────────────────
         if self.status == self.Status.CONFIRMED and self.schedule.available_slots <= 0:
             errors["status"] = (
                 f"No available slots remaining for '{subject.subject_code}' – "

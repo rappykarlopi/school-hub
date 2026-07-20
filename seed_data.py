@@ -87,28 +87,32 @@ for username, snum, fname, lname in student_data:
     created_students.append(s)
     print(f"  ✓ Student: {username} / student1234  ({fname} {lname}, {snum})")
 
+# (code, title, units, prereq_code, prereq_type, term_number)
+# term_number is the curriculum placement set by the admin and implements
+# the trimestral enlistment restriction.
 subjects_data = [
-    ("CMPDESN", "Computer Design",              3, None, "hard"),
-    ("CMPE30A", "Computer Engineering I",       3, None, "hard"),
-    ("CMPE30B", "Computer Engineering II",      3, "CMPE30A", "hard"),
-    ("LBYCPG3", "CPE Integrative Project III",  2, "CMPE30B", "hard"),
-    ("ENGMATH1","Engineering Mathematics I",     3, None, "hard"),
-    ("ENGMATH2","Engineering Mathematics II",    3, "ENGMATH1", "hard"),
-    ("DATASRUC", "Data Structures",             3, "CMPE30A", "soft"),
-    ("ENGTREP", "Engineering Entrepreneurship", 3, None, "hard"),
-    ("CMPE30AL", "Computer Engineering I Lab",  1, "CMPE30A", "co_requisite"),
+    ("CMPDESN", "Computer Design",              3, None,       "hard",         3),
+    ("CMPE30A", "Computer Engineering I",       3, None,       "hard",         1),
+    ("CMPE30B", "Computer Engineering II",      3, "CMPE30A",  "hard",         2),
+    ("LBYCPG3", "CPE Integrative Project III",  2, "CMPE30B",  "hard",         3),
+    ("ENGMATH1","Engineering Mathematics I",     3, None,       "hard",        1),
+    ("ENGMATH2","Engineering Mathematics II",    3, "ENGMATH1", "hard",        2),
+    ("DATASRUC", "Data Structures",             3, "CMPE30A",  "soft",         1),
+    ("ENGTREP", "Engineering Entrepreneurship", 3, None,       "hard",         1),
+    ("CMPE30AL", "Computer Engineering I Lab",  1, "CMPE30A",  "co_requisite", 1),
 ]
 subj_map = {}
-for code, title, units, prereq_code, prereq_type in subjects_data:
+for code, title, units, prereq_code, prereq_type, term_number in subjects_data:
     subj, _ = Subject.objects.get_or_create(subject_code=code, defaults={
         "subject_title": title,
         "units": units,
         "prerequisite_type": prereq_type,
+        "term_number": term_number,
     })
     subj_map[code] = subj
 
 # Assign prerequisites in a second pass (after all subjects exist)
-for code, title, units, prereq_code, prereq_type in subjects_data:
+for code, title, units, prereq_code, prereq_type, term_number in subjects_data:
     if prereq_code:
         subj = subj_map[code]
         subj.prerequisite = subj_map[prereq_code]
@@ -131,11 +135,12 @@ print(f"  ✓ {len(rooms_data)} rooms created/verified")
 AcademicTerm.objects.all().update(is_active=False)
 term, _ = AcademicTerm.objects.get_or_create(
     term_name="AY 2025-2026 Term 3",
-    defaults={"is_active": True}
+    defaults={"is_active": True, "term_number": 3}
 )
 term.is_active = True
+term.term_number = 3
 term.save()
-print(f"  ✓ Active term: {term.term_name}")
+print(f"  ✓ Active term: {term.term_name} (Term {term.term_number})")
 
 schedule_defs = [
     # (subject_code, faculty_idx, room_idx, day,   time_start,   time_end,    slots)
