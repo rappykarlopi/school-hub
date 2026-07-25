@@ -136,5 +136,32 @@
   </div>
 </footer>
 
+<script>
+  document.addEventListener("submit", function (event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const method = (form.getAttribute("method") || "get").toLowerCase();
+    if (method !== "post" || form.dataset.submitting === "true") {
+      if (method === "post") {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    form.dataset.submitting = "true";
+    form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(function (button) {
+      button.disabled = true;
+      button.classList.add("opacity-60", "cursor-not-allowed");
+      if (button.tagName === "BUTTON" && button.dataset.pendingText) {
+        button.dataset.originalText = button.textContent;
+        button.textContent = button.dataset.pendingText;
+      }
+    });
+  });
+</script>
+
 </body>
 </html>

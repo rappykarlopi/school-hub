@@ -149,7 +149,7 @@
             {% else %}
               <form method="post" action="{% url 'add_to_cart' sched.pk %}">
                 {% csrf_token %}
-                <button type="submit"
+                <button type="submit" data-pending-text="Adding..."
                   class="bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold
                          px-3 py-1.5 rounded-lg transition-colors">
                   + Add to Cart

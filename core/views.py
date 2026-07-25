@@ -9,22 +9,24 @@ Flow coverage:
   - Shared:   Error helpers, access guards
 """
 
+import json
 from io import BytesIO
 
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.dateparse import parse_time
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import (
     AcademicTerm, Enrollment, Faculty,
-    Schedule, Student, Subject, User,
+    Room, Schedule, Student, Subject, User,
 )
 
 
@@ -75,6 +77,88 @@ def _get_active_term():
     return AcademicTerm.objects.filter(is_active=True).first()
 
 
+def admin_required(view_fn):
+    """Allow only authenticated administrators."""
+    @login_required(login_url="login")
+    def wrapper(request, *args, **kwargs):
+        if not (request.user.is_admin or request.user.is_staff):
+            return JsonResponse(
+                {"success": False, "message": "Administrator access is required."},
+                status=403,
+            )
+        return view_fn(request, *args, **kwargs)
+    wrapper.__name__ = view_fn.__name__
+    return wrapper
+
+
+def _json_error(message, status=400):
+    return JsonResponse({"success": False, "message": message}, status=status)
+
+
+def _wants_json(request):
+    return (
+        request.headers.get("Accept") == "application/json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.content_type == "application/json"
+    )
+
+
+def _validation_messages(exc):
+    if hasattr(exc, "message_dict"):
+        messages_list = []
+        for errs in exc.message_dict.values():
+            messages_list.extend(errs if isinstance(errs, list) else [errs])
+        return [str(msg) for msg in messages_list]
+    return [str(msg) for msg in exc.messages]
+
+
+def _parse_json_or_post(request):
+    if request.content_type == "application/json":
+        try:
+            return json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            raise ValidationError("Invalid JSON payload.")
+    return request.POST
+
+
+def _get_required_int(data, key):
+    value = data.get(key)
+    if value in (None, ""):
+        raise ValidationError(f"{key} is required.")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{key} must be a number.")
+
+
+def _get_required_time(data, key):
+    value = data.get(key)
+    if value in (None, ""):
+        raise ValidationError(f"{key} is required.")
+    parsed = parse_time(str(value))
+    if parsed is None:
+        raise ValidationError(f"{key} must be a valid time.")
+    return parsed
+
+
+def _get_optional_int(data, key, default):
+    value = data.get(key)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{key} must be a number.")
+
+
+def _class_duplicate_response():
+    return _json_error(Schedule.DUPLICATE_CLASS_MESSAGE, status=409)
+
+
+def _enrollment_conflict_response(message):
+    return _json_error(message, status=409)
+
+
 # ═════════════════════════════════════════════
 #  AUTH VIEWS
 # ═════════════════════════════════════════════
@@ -118,6 +202,83 @@ def _role_redirect(user):
     if user.is_student:
         return redirect("student_dashboard")
     return redirect("login")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  ADMIN JSON API
+# ═════════════════════════════════════════════════════════════════════════════
+
+@admin_required
+@require_POST
+def create_class(request):
+    """
+    Create one Schedule class offering.
+
+    A class is uniquely identified by term + subject + meeting day/time. The
+    database constraint enforces the same rule to prevent racing requests from
+    creating duplicates after this pre-check passes.
+    """
+    try:
+        data = _parse_json_or_post(request)
+
+        term = get_object_or_404(AcademicTerm, pk=_get_required_int(data, "term_id"))
+        subject = get_object_or_404(Subject, pk=_get_required_int(data, "subject_id"))
+        faculty = get_object_or_404(Faculty, pk=_get_required_int(data, "faculty_id"))
+        room = get_object_or_404(Room, pk=_get_required_int(data, "room_id"))
+        total_slots = _get_optional_int(data, "total_slots", room.capacity)
+        available_slots = _get_optional_int(data, "available_slots", total_slots)
+
+        schedule = Schedule(
+            term=term,
+            subject=subject,
+            faculty=faculty,
+            room=room,
+            day=data.get("day"),
+            time_start=_get_required_time(data, "time_start"),
+            time_end=_get_required_time(data, "time_end"),
+            total_slots=total_slots,
+            available_slots=available_slots,
+        )
+
+        duplicate_exists = Schedule.objects.filter(
+            term=schedule.term,
+            subject=schedule.subject,
+            day=schedule.day,
+            time_start=schedule.time_start,
+            time_end=schedule.time_end,
+        ).exists()
+        if duplicate_exists:
+            return _class_duplicate_response()
+
+        schedule.full_clean()
+        with transaction.atomic():
+            schedule.save()
+
+    except ValidationError as exc:
+        error_messages = _validation_messages(exc)
+        if Schedule.DUPLICATE_CLASS_MESSAGE in error_messages:
+            return _class_duplicate_response()
+        return _json_error(error_messages[0] if error_messages else "Invalid class data.")
+    except Http404:
+        return _json_error("Related record not found.", status=404)
+    except IntegrityError:
+        return _class_duplicate_response()
+
+    return JsonResponse(
+        {
+            "success": True,
+            "message": "Class created successfully.",
+            "class": {
+                "id": schedule.pk,
+                "term": schedule.term.term_name,
+                "subject": schedule.subject.subject_code,
+                "day": schedule.day,
+                "time_start": schedule.time_start.strftime("%H:%M"),
+                "time_end": schedule.time_end.strftime("%H:%M"),
+            },
+        },
+        status=201,
+    )
 
 
 # ═════════════════════════════════════════════
@@ -180,6 +341,7 @@ def subject_list(request):
     term     = _get_active_term()
     schedules = Schedule.objects.none()
     enrolled_schedule_ids = set()
+    blocked_subject_ids = set()
 
     query = request.GET.get("q", "").strip()
 
@@ -201,14 +363,20 @@ def subject_list(request):
 
         enrolled_schedule_ids = set(
             Enrollment.objects
-            .filter(student=student, schedule__term=term)
+            .filter(student=student, term=term)
             .values_list("schedule_id", flat=True)
+        )
+        blocked_subject_ids = set(
+            Enrollment.objects
+            .filter(student=student, status__in=[Enrollment.Status.CART, Enrollment.Status.CONFIRMED])
+            .values_list("subject_id", flat=True)
         )
 
     context = {
         "term":                  term,
         "schedules":             schedules,
         "enrolled_schedule_ids": enrolled_schedule_ids,
+        "blocked_subject_ids":   blocked_subject_ids,
         "query":                 query,
         "term_number":           term.get_term_number_display() if term else None,
     }
@@ -231,13 +399,26 @@ def add_to_cart(request, schedule_id):
     term     = _get_active_term()
 
     if not term:
+        if _wants_json(request):
+            return _json_error("No active enrollment term. Contact the administrator.")
         messages.error(request, "No active enrollment term. Contact the administrator.")
         return redirect("subject_list")
 
-    schedule = get_object_or_404(Schedule, pk=schedule_id, term=term)
+    try:
+        schedule = get_object_or_404(Schedule, pk=schedule_id, term=term)
+    except Http404:
+        if _wants_json(request):
+            return _json_error("Class offering not found.", status=404)
+        raise
 
     # Prevent re-adding something already in cart / confirmed
-    if Enrollment.objects.filter(student=student, schedule=schedule).exists():
+    duplicate_message = (
+        f"You already have '{schedule.subject.subject_code}' in your cart or schedule for this term."
+    )
+
+    if Enrollment.objects.filter(student=student, term=term, subject=schedule.subject).exists():
+        if _wants_json(request):
+            return _enrollment_conflict_response(duplicate_message)
         messages.warning(request, f"'{schedule.subject.subject_code}' is already in your cart or enrolled list.")
         return redirect("subject_list")
 
@@ -248,17 +429,42 @@ def add_to_cart(request, schedule_id):
     )
 
     try:
-        enrollment.full_clean(exclude={"schedule"})
-        enrollment.save()
+        with transaction.atomic():
+            Student.objects.select_for_update().get(pk=student.pk)
+            enrollment.full_clean(exclude={"schedule"})
+            enrollment.save()
+        if _wants_json(request):
+            return JsonResponse(
+                {
+                    "success": True,
+                    "message": f"'{schedule.subject.subject_code}' added to your cart.",
+                    "enrollment_id": enrollment.pk,
+                },
+                status=201,
+            )
         messages.success(
             request,
             f"✓ '{schedule.subject.subject_code} – {schedule.subject.subject_title}' "
             f"added to your cart."
         )
     except ValidationError as exc:
-        for field, errs in (exc.message_dict.items() if hasattr(exc, "message_dict") else [("__all__", exc.messages)]):
-            for msg in (errs if isinstance(errs, list) else [errs]):
-                messages.error(request, str(msg))
+        error_messages = _validation_messages(exc)
+        if _wants_json(request):
+            status = 409 if any(
+                message in error_messages
+                for message in [
+                    duplicate_message,
+                    Enrollment.COMPLETED_COURSE_MESSAGE,
+                    Enrollment.ACTIVE_COURSE_MESSAGE,
+                ]
+            ) else 400
+            return _json_error(error_messages[0] if error_messages else "Invalid enrollment data.", status=status)
+        for msg in error_messages:
+            messages.error(request, msg)
+    except IntegrityError:
+        if _wants_json(request):
+            return _enrollment_conflict_response(duplicate_message)
+        messages.warning(request, f"'{schedule.subject.subject_code}' is already in your cart or enrolled list.")
 
     return redirect("subject_list")
 
