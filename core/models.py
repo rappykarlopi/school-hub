@@ -218,6 +218,8 @@ class AcademicTerm(models.Model):
 # ─────────────────────────────────────────────
 
 class Schedule(models.Model):
+    DUPLICATE_CLASS_MESSAGE = "This class already exists."
+
     class Day(models.TextChoices):
         MONDAY    = "MON", "Monday"
         TUESDAY   = "TUE", "Tuesday"
@@ -242,6 +244,11 @@ class Schedule(models.Model):
         ordering = ["term", "day", "time_start"]
         # ── DB-level double-booking guards ───────────────────
         constraints = [
+            # The same subject cannot be offered twice in the same term at the same meeting time
+            models.UniqueConstraint(
+                fields=["term", "subject", "day", "time_start", "time_end"],
+                name="unique_subject_offering_slot",
+            ),
             # A room cannot host two classes at the same time on the same day in the same term
             models.UniqueConstraint(
                 fields=["term", "room", "day", "time_start", "time_end"],
@@ -271,6 +278,19 @@ class Schedule(models.Model):
             return
         if self.time_start >= self.time_end:
             raise ValidationError("time_start must be before time_end.")
+
+        duplicate_qs = Schedule.objects.filter(
+            term=self.term,
+            subject=self.subject,
+            day=self.day,
+            time_start=self.time_start,
+            time_end=self.time_end,
+        )
+        if self.pk:
+            duplicate_qs = duplicate_qs.exclude(pk=self.pk)
+
+        if duplicate_qs.exists():
+            raise ValidationError(self.DUPLICATE_CLASS_MESSAGE)
 
         base_qs = Schedule.objects.filter(
             term=self.term,
@@ -304,12 +324,17 @@ class Schedule(models.Model):
 # ─────────────────────────────────────────────
 
 class Enrollment(models.Model):
+    COMPLETED_COURSE_MESSAGE = "You have already completed this course."
+    ACTIVE_COURSE_MESSAGE = "You already have an active enrollment for this course."
+
     class Status(models.TextChoices):
         CART      = "Cart",      "In Cart"
         CONFIRMED = "Confirmed", "Confirmed"
 
     student     = models.ForeignKey(Student,  on_delete=models.CASCADE, related_name="enrollments")
     schedule    = models.ForeignKey(Schedule, on_delete=models.CASCADE, related_name="enrollments")
+    term        = models.ForeignKey(AcademicTerm, on_delete=models.CASCADE, related_name="enrollments", editable=False)
+    subject     = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name="enrollments", editable=False)
     status      = models.CharField(max_length=12, choices=Status.choices, default=Status.CART)
     enrolled_at = models.DateTimeField(default=timezone.now)
 
@@ -318,6 +343,13 @@ class Enrollment(models.Model):
         verbose_name_plural = "Enrollments"
         # A student cannot enroll in the exact same schedule offering twice
         unique_together = [("student", "schedule")]
+        constraints = [
+            # A student cannot hold two enrollment rows for the same subject in one term
+            models.UniqueConstraint(
+                fields=["student", "term", "subject"],
+                name="unique_student_subject_per_term",
+            ),
+        ]
         ordering = ["-enrolled_at"]
 
     def __str__(self):
@@ -326,9 +358,9 @@ class Enrollment(models.Model):
     # ── Comprehensive Validation Engine ──────────────────────────────────────
 
     def _has_subject_history(self, subject, *, term=None, passed_only=False):
-        qs = Enrollment.objects.filter(student=self.student, schedule__subject=subject)
+        qs = Enrollment.objects.filter(student=self.student, subject=subject)
         if term is not None:
-            qs = qs.filter(schedule__term=term)
+            qs = qs.filter(term=term)
         if passed_only:
             qs = qs.filter(status=self.Status.CONFIRMED)
         else:
@@ -341,7 +373,7 @@ class Enrollment(models.Model):
         errors = []
 
         confirmed_enrollments = list(
-            cls.objects.filter(student=student, schedule__term=term, status=cls.Status.CONFIRMED)
+            cls.objects.filter(student=student, term=term, status=cls.Status.CONFIRMED)
             .select_related("schedule__subject")
         )
         confirmed_subject_ids = {item.schedule.subject_id for item in confirmed_enrollments}
@@ -455,11 +487,33 @@ class Enrollment(models.Model):
                     )
 
         # ── 3. Duplicate subject check ────────────────────────────────────
+        completed_subject_qs = Enrollment.objects.filter(
+            student=self.student,
+            subject=subject,
+            status=self.Status.CONFIRMED,
+        )
+        if self.pk:
+            completed_subject_qs = completed_subject_qs.exclude(pk=self.pk)
+
+        if completed_subject_qs.exclude(term=self.schedule.term).exists():
+            errors.setdefault("schedule", self.COMPLETED_COURSE_MESSAGE)
+
+        active_subject_qs = Enrollment.objects.filter(
+            student=self.student,
+            subject=subject,
+            status=self.Status.CART,
+        )
+        if self.pk:
+            active_subject_qs = active_subject_qs.exclude(pk=self.pk)
+
+        if active_subject_qs.exclude(term=self.schedule.term).exists():
+            errors.setdefault("schedule", self.ACTIVE_COURSE_MESSAGE)
+
         # Prevent adding the same subject twice in the same term (different section)
         same_subject_qs = Enrollment.objects.filter(
             student=self.student,
-            schedule__term=self.schedule.term,
-            schedule__subject=subject,
+            term=self.schedule.term,
+            subject=subject,
         )
         if self.pk:
             same_subject_qs = same_subject_qs.exclude(pk=self.pk)
@@ -481,5 +535,8 @@ class Enrollment(models.Model):
 
     def save(self, *args, **kwargs):
         """Always run full validation before saving."""
+        if self.schedule_id:
+            self.term_id = self.schedule.term_id
+            self.subject_id = self.schedule.subject_id
         self.full_clean()
         super().save(*args, **kwargs)
