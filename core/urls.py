@@ -10,6 +10,7 @@ urlpatterns = [
     # ── Auth ──────────────────────────────────────────────────────────
     path("",          views.login_view,  name="login"),
     path("logout/",   views.logout_view, name="logout"),
+    path("api/classes/create/", views.create_class, name="create_class"),
 
     # ── Student ───────────────────────────────────────────────────────
     path("student/dashboard/",        views.student_dashboard,  name="student_dashboard"),

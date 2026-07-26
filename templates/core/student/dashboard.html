@@ -62,7 +62,7 @@
     <form method="post" action="{% url 'confirm_enlistment' %}"
           onsubmit="return confirm('Confirm enlistment for all {{ cart_enrollments|length }} subject(s)?')">
       {% csrf_token %}
-      <button type="submit"
+      <button type="submit" data-pending-text="Confirming..."
         class="bg-green-700 hover:bg-green-600 text-white text-sm font-semibold
                px-4 py-2 rounded-lg transition-colors">
         ✓ Confirm All Enlistment
@@ -91,7 +91,7 @@
         <span class="text-sm text-slate-600 font-medium">{{ enr.schedule.subject.units }} units</span>
         <form method="post" action="{% url 'remove_from_cart' enr.pk %}">
           {% csrf_token %}
-          <button type="submit"
+          <button type="submit" data-pending-text="Removing..."
             class="text-red-500 hover:text-red-700 text-xs font-medium px-2 py-1
                    rounded hover:bg-red-50 transition-colors">
             Remove
