@@ -1,0 +1,55 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:core_academicterm_changelist' %}">Academic terms</a>
+  &rsaquo; Copy schedules
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <p>
+    Copy all <strong>Schedule</strong> (subject offering) rows from an existing term
+    into <strong>&ldquo;{{ target.term_name }}&rdquo;</strong> (Term {{ target.term_number }}).
+    Sections that already exist in the target term (same subject, faculty, room, day, and time)
+    are skipped automatically.
+  </p>
+
+  {% if not source_choices %}
+  <p class="errornote">
+    There are no other academic terms to copy schedules from yet.
+  </p>
+  <a href="{% url 'admin:core_academicterm_changelist' %}" class="button">
+    &larr; Back to Academic Terms
+  </a>
+  {% else %}
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="target" value="{{ target.pk }}">
+
+    <fieldset class="module aligned">
+      <div class="form-row">
+        <div>
+          <label for="id_source" class="required">Copy schedules from:</label>
+          <select name="source" id="id_source" required>
+            {% for term in source_choices %}
+            <option value="{{ term.pk }}">
+              {{ term.term_name }} (Term {{ term.term_number }}){% if term.is_active %} — currently active{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" value="Copy Schedules" class="default">
+      <a href="{% url 'admin:core_academicterm_changelist' %}" class="button cancel-link">Cancel</a>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

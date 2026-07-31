@@ -4,12 +4,14 @@ admin.py  |  Phase 2: Django Admin Auto-Generation
 Covers 100% of the Administrator functional requirements out of the box.
 """
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
+from django.db import transaction, IntegrityError
 from django.db.models import Count, Sum, Q
 from django.http import HttpResponseRedirect
-from django.urls import reverse
+from django.urls import reverse, path
+from django.shortcuts import render, get_object_or_404
 from .models import (
     User, Faculty, Student, Subject,
     Room, AcademicTerm, Schedule, Enrollment,
@@ -235,7 +237,7 @@ class AcademicTermAdmin(admin.ModelAdmin):
     list_filter   = ("term_number", "is_active")
     search_fields = ("term_name",)
     ordering      = ("-created_at",)
-    actions       = ["make_active"]
+    actions       = ["make_active", "copy_schedules_action"]
 
     fieldsets = (
         (None, {
@@ -263,6 +265,113 @@ class AcademicTermAdmin(admin.ModelAdmin):
             first = queryset.order_by("term_name").first()
             queryset.exclude(pk=first.pk).update(is_active=False)
         self.message_user(request, "Active term updated successfully.")
+
+    # ── Copy schedules from another term ─────────────────────────────
+    #
+    # Creating a new AcademicTerm does NOT create any Schedule (course
+    # offering) rows — those are separate records tied to a specific term.
+    # This action lets an admin pick exactly one newly-created term, then
+    # choose an existing term to clone all its schedules from, instead of
+    # re-entering every subject/faculty/room/day/time by hand.
+
+    @admin.action(description="Copy schedules from another term…")
+    def copy_schedules_action(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Please select exactly one term to copy schedules INTO.",
+                level=messages.ERROR,
+            )
+            return
+        target = queryset.first()
+        url = reverse("admin:core_academicterm_copy_schedules")
+        return HttpResponseRedirect(f"{url}?target={target.pk}")
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                "copy-schedules/",
+                self.admin_site.admin_view(self.copy_schedules_view),
+                name="core_academicterm_copy_schedules",
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def copy_schedules_view(self, request):
+        target_id = request.GET.get("target") or request.POST.get("target")
+        target = get_object_or_404(AcademicTerm, pk=target_id)
+        source_choices = AcademicTerm.objects.exclude(pk=target.pk).order_by("-created_at")
+
+        if request.method == "POST":
+            source_id = request.POST.get("source")
+            source = get_object_or_404(AcademicTerm, pk=source_id)
+            source_schedules = Schedule.objects.filter(term=source)
+
+            created_count = 0
+            skipped_count = 0
+            failed_count = 0
+            for sched in source_schedules:
+                try:
+                    with transaction.atomic():
+                        _, created = Schedule.objects.get_or_create(
+                            term=target,
+                            subject=sched.subject,
+                            faculty=sched.faculty,
+                            room=sched.room,
+                            day=sched.day,
+                            time_start=sched.time_start,
+                            time_end=sched.time_end,
+                            defaults={
+                                "total_slots": sched.total_slots,
+                                "available_slots": sched.total_slots,
+                            },
+                        )
+                    if created:
+                        created_count += 1
+                    else:
+                        skipped_count += 1
+                except IntegrityError:
+                    # Room or faculty already booked at that day/time in the target term
+                    failed_count += 1
+
+            if created_count:
+                summary = (
+                    f"Copied {created_count} schedule(s) from '{source.term_name}' "
+                    f"into '{target.term_name}'."
+                )
+                if skipped_count:
+                    summary += f" {skipped_count} already existed and were skipped."
+                if failed_count:
+                    summary += (
+                        f" {failed_count} could not be copied due to a room/faculty "
+                        f"time conflict already in '{target.term_name}' — review those manually."
+                    )
+                self.message_user(
+                    request,
+                    summary,
+                    level=messages.WARNING if failed_count else messages.SUCCESS,
+                )
+            else:
+                self.message_user(
+                    request,
+                    f"No new schedules copied — '{source.term_name}' has no schedules, "
+                    f"or they already exist or conflict in '{target.term_name}'.",
+                    level=messages.WARNING,
+                )
+
+            opts = self.model._meta
+            return HttpResponseRedirect(
+                reverse(f"admin:{opts.app_label}_{opts.model_name}_changelist")
+            )
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Copy schedules into \u201c{target.term_name}\u201d",
+            "target": target,
+            "source_choices": source_choices,
+            "opts": self.model._meta,
+        }
+        return render(request, "admin/core/academicterm/copy_schedules.html", context)
 
 
 # ─────────────────────────────────────────────

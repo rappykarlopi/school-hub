@@ -29,6 +29,9 @@ from .models import (
     Room, Schedule, Student, Subject, User,
 )
 
+# ── Constant for maximum units per term ──────────────────────────────────────
+MAX_UNITS = 21
+
 
 # ─────────────────────────────────────────────
 #  Access Guard Decorators
@@ -324,6 +327,7 @@ def student_dashboard(request):
         "cart_enrollments":      cart_enrollments,
         "total_confirmed_units": total_confirmed_units,
         "total_cart_units":      total_cart_units,
+        "cart_exceeds_max":      total_cart_units > MAX_UNITS,   # <-- NEW
     }
     return render(request, "core/student/dashboard.html", context)
 
@@ -394,6 +398,9 @@ def add_to_cart(request, schedule_id):
       • Prerequisite validation
       • Duplicate subject detection
       • Time-overlap conflict detection
+
+    Additionally, this view checks the total units in the cart after adding
+    the subject and rejects if it exceeds MAX_UNITS.
     """
     student  = request.student
     term     = _get_active_term()
@@ -411,17 +418,32 @@ def add_to_cart(request, schedule_id):
             return _json_error("Class offering not found.", status=404)
         raise
 
-    # Prevent re-adding something already in cart / confirmed
+    # ── Duplicate check ──────────────────────────────────────────────────
     duplicate_message = (
         f"You already have '{schedule.subject.subject_code}' in your cart or schedule for this term."
     )
-
     if Enrollment.objects.filter(student=student, term=term, subject=schedule.subject).exists():
         if _wants_json(request):
             return _enrollment_conflict_response(duplicate_message)
         messages.warning(request, f"'{schedule.subject.subject_code}' is already in your cart or enrolled list.")
         return redirect("subject_list")
 
+    # ── Unit cap check ──────────────────────────────────────────────────
+    # Compute current cart total (excluding the subject we're about to add)
+    current_cart_total = sum(
+        e.schedule.subject.units
+        for e in Enrollment.objects.filter(student=student, term=term, status=Enrollment.Status.CART)
+        .select_related("schedule__subject")
+    )
+    new_total = current_cart_total + schedule.subject.units
+    if new_total > MAX_UNITS:
+        error_msg = f"Exceeded Maximum Unit of {MAX_UNITS}. Reduce units. (Current: {current_cart_total} + {schedule.subject.units} = {new_total})"
+        if _wants_json(request):
+            return _json_error(error_msg, status=400)
+        messages.error(request, error_msg)
+        return redirect("subject_list")
+
+    # ── Create enrollment ───────────────────────────────────────────────
     enrollment = Enrollment(
         student=student,
         schedule=schedule,
@@ -501,7 +523,8 @@ def confirm_enlistment(request):
       3. Flip status → 'Confirmed'
       4. Cascade saves atomically
 
-    If ANY slot runs out, the entire transaction rolls back.
+    If ANY slot runs out, or the total units exceed MAX_UNITS, the entire
+    transaction rolls back.
     """
     student = request.student
     term    = _get_active_term()
@@ -522,6 +545,17 @@ def confirm_enlistment(request):
         messages.warning(request, "Your cart is empty. Add subjects before confirming.")
         return redirect("student_dashboard")
 
+    # ── Unit cap check ──────────────────────────────────────────────────
+    total_cart_units = sum(item.schedule.subject.units for item in cart_items)
+    if total_cart_units > MAX_UNITS:
+        messages.error(
+            request,
+            f"Cannot confirm enlistment: total units ({total_cart_units}) exceed the maximum of {MAX_UNITS}. "
+            "Remove some subjects from your cart and try again."
+        )
+        return redirect("student_dashboard")
+
+    # ── Validation via Enrollment.validate_cart ────────────────────────
     validation_errors = Enrollment.validate_cart(student, term, cart_items)
     if validation_errors:
         for msg in validation_errors:
@@ -553,8 +587,6 @@ def confirm_enlistment(request):
 
                 item.status      = Enrollment.Status.CONFIRMED
                 item.enrolled_at = timezone.now()
-                # Skip full_clean here: we already validated on add_to_cart;
-                # we're only changing status & enrolled_at, not the schedule link.
                 Enrollment.objects.filter(pk=item.pk).update(
                     status=Enrollment.Status.CONFIRMED,
                     enrolled_at=item.enrolled_at,
@@ -921,4 +953,4 @@ def faculty_class_list(request):
         "term":     term,
         "sections": sections,
     }
-    return render(request, "core/faculty/class_list.html", context)
+    return render(request, "core/faculty/class_list.html")
