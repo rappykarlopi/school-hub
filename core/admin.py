@@ -4,6 +4,7 @@ admin.py  |  Phase 2: Django Admin Auto-Generation
 Covers 100% of the Administrator functional requirements out of the box.
 """
 
+from django import forms
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
@@ -22,13 +23,44 @@ from .models import (
 #  Inline helpers
 # ─────────────────────────────────────────────
 
+class FacultyInlineForm(forms.ModelForm):
+    class Meta:
+        model = Faculty
+        fields = "__all__"
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if instance.user_id:
+            instance.first_name = instance.user.first_name or instance.first_name
+            instance.last_name = instance.user.last_name or instance.last_name
+        if commit:
+            instance.save()
+        return instance
+
+
+class StudentInlineForm(forms.ModelForm):
+    class Meta:
+        model = Student
+        fields = "__all__"
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if instance.user_id:
+            instance.first_name = instance.user.first_name or instance.first_name
+            instance.last_name = instance.user.last_name or instance.last_name
+        if commit:
+            instance.save()
+        return instance
+
+
 class FacultyInline(admin.StackedInline):
     model  = Faculty
     extra  = 1
     max_num = 1
     can_delete = False
     verbose_name_plural = "Faculty Profile"
-    fields = ("first_name", "last_name", "department", "max_teaching_load")
+    form = FacultyInlineForm
+    fields = ("department", "max_teaching_load")
 
 
 class StudentInline(admin.StackedInline):
@@ -37,7 +69,8 @@ class StudentInline(admin.StackedInline):
     max_num = 1
     can_delete = False
     verbose_name_plural = "Student Profile"
-    fields = ("student_number", "first_name", "last_name", "program")
+    form = StudentInlineForm
+    fields = ("student_number", "program")
 
 
 class EnrollmentInline(admin.TabularInline):

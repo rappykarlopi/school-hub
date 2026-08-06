@@ -14,13 +14,24 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "enlistment.settings")
 django.setup()
 
 import itertools
+import random
 from django.contrib.auth import get_user_model
-from core.models import Faculty, Student, Subject, Room, AcademicTerm, Schedule
+from core.models import AcademicTerm, Enrollment, Faculty, Room, Schedule, Student, Subject
 from datetime import time
 
 User = get_user_model()
 
 print("⚡ Seeding LBYCPG3 demo data...")
+
+# Reset prior demo data so re-running the script produces a clean, consistent dataset.
+Schedule.objects.all().delete()
+Enrollment.objects.all().delete()
+AcademicTerm.objects.all().delete()
+Subject.objects.all().delete()
+Room.objects.all().delete()
+Faculty.objects.all().delete()
+Student.objects.all().delete()
+User.objects.exclude(username="admin").delete()
 
 # ── 1. Admin User ─────────────────────────────────────────────────────────────
 admin, _ = User.objects.get_or_create(username="admin", defaults={
@@ -45,6 +56,14 @@ faculty_data = [
     ("faculty6", "Michael",   "Torres",     "Computer Engineering"),
     ("faculty7", "Grace",     "Fernandez",  "Natural Sciences"),
     ("faculty8", "Patricia",  "Lim",        "General Education"),
+    ("faculty9", "Elena",     "Ramos",      "Computer Engineering"),
+    ("faculty10", "Chris",    "Dizon",      "Computer Engineering"),
+    ("faculty11", "Nina",     "Castillo",   "Mathematics"),
+    ("faculty12", "Bryan",    "Pascual",    "Computer Engineering"),
+    ("faculty13", "Liza",     "Mendoza",    "Natural Sciences"),
+    ("faculty14", "Kevin",    "Tan",        "General Education"),
+    ("faculty15", "Sofia",    "David",      "Computer Engineering"),
+    ("faculty16", "Renz",     "Bautista",   "Computer Engineering"),
 ]
 created_faculty = []
 for username, fname, lname, dept in faculty_data:
@@ -61,7 +80,7 @@ for username, fname, lname, dept in faculty_data:
         "first_name": fname,
         "last_name":  lname,
         "department": dept,
-        "max_teaching_load": 21,
+        "max_teaching_load": 16,
     })
     created_faculty.append(f)
     print(f"  ✓ Faculty: {username} / faculty1234  ({fname} {lname})")
@@ -233,7 +252,7 @@ print(f"  ✓ {len(subjects_data)} subjects created/verified")
 rooms_data = [
     ("GK101", 40), ("GK102", 40), ("GK103", 40), ("GK104", 40), ("GK105", 40),
     ("LS202", 35), ("LS203", 35), ("LS204", 35),
-    ("AG1901", 50), ("CTR-GYM", 60),
+    ("AG1901", 50),
 ]
 created_rooms = []
 for name, cap in rooms_data:
@@ -254,13 +273,31 @@ PERIODS = [
     (time(17, 30), time(19, 0)),
 ]
 
-def auto_schedule_term(subject_codes, faculty_count, room_count):
+MAX_FACULTY_UNITS = 16
+
+
+def _select_faculty_for_subject(subject, candidate_indices, faculty_loads):
+    available_indices = [
+        idx for idx in candidate_indices
+        if faculty_loads.get(idx, 0) + subject.units <= MAX_FACULTY_UNITS
+    ]
+    if not available_indices:
+        raise RuntimeError(
+            f"No faculty can take {subject.subject_code} without exceeding {MAX_FACULTY_UNITS} units"
+        )
+    return min(available_indices, key=lambda idx: faculty_loads.get(idx, 0))
+
+
+def auto_schedule_term(subject_codes, faculty_count, room_count, faculty_loads=None):
     """
     Create a conflict‑free timetable for one term.
     Subjects are assigned to slots in round‑robin order across all (day,period)
     combinations, so they spread naturally across the week and across times.
     Co‑requisite labs are placed on the same day as their lecture.
     """
+    if faculty_loads is None:
+        faculty_loads = {idx: 0 for idx in range(faculty_count)}
+
     used_faculty_slots = set()   # (faculty_idx, day_idx, period_idx)
     used_room_slots = set()      # (room_idx, day_idx, period_idx)
     placement = {}               # code -> (faculty_idx, room_idx, day_idx, period_idx)
@@ -293,8 +330,9 @@ def auto_schedule_term(subject_codes, faculty_count, room_count):
 
     # First assign lectures
     for code in lectures:
-        fac_idx = next(itertools.cycle(range(faculty_count)))
-        room_idx = next(itertools.cycle(range(room_count)))
+        subject = subj_map[code]
+        fac_idx = _select_faculty_for_subject(subject, list(range(faculty_count)), faculty_loads)
+        room_idx = random.randrange(room_count)
         # Find a free slot for this faculty/room
         found = False
         # Try the next 2*total_slots slots to avoid infinite loop
@@ -309,6 +347,7 @@ def auto_schedule_term(subject_codes, faculty_count, room_count):
         used_faculty_slots.add((fac_idx, day_idx, period_idx))
         used_room_slots.add((room_idx, day_idx, period_idx))
         placement[code] = (fac_idx, room_idx, day_idx, period_idx)
+        faculty_loads[fac_idx] += subject.units
         tstart, tend = PERIODS[period_idx]
         slots = created_rooms[room_idx].capacity
         schedule_defs.append((code, fac_idx, room_idx, DAYS[day_idx], tstart, tend, slots))
@@ -316,8 +355,11 @@ def auto_schedule_term(subject_codes, faculty_count, room_count):
     # Now assign labs: try to put on same day as lecture, and later period if possible
     for code in labs:
         lecture_code = subj_map[code].prerequisite.subject_code
+        subject = subj_map[code]
         if lecture_code in placement:
             fac_idx, room_idx, lec_day, lec_period = placement[lecture_code]
+            candidate_indices = [fac_idx] + [idx for idx in range(faculty_count) if idx != fac_idx]
+            fac_idx = _select_faculty_for_subject(subject, candidate_indices, faculty_loads)
             # Try to find a free slot on same day, starting from lec_period+1
             found = False
             for period_offset in range(len(PERIODS)):
@@ -339,8 +381,8 @@ def auto_schedule_term(subject_codes, faculty_count, room_count):
                     raise RuntimeError(f"Could not find free slot for lab {code}")
         else:
             # Lecture not in this term (unlikely) – assign any free slot
-            fac_idx = next(itertools.cycle(range(faculty_count)))
-            room_idx = next(itertools.cycle(range(room_count)))
+            fac_idx = _select_faculty_for_subject(subject, list(range(faculty_count)), faculty_loads)
+            room_idx = random.randrange(room_count)
             for _ in range(total_slots * 2):
                 day_idx, period_idx = next_slot()
                 if (fac_idx, day_idx, period_idx) not in used_faculty_slots and \
@@ -352,6 +394,7 @@ def auto_schedule_term(subject_codes, faculty_count, room_count):
         used_faculty_slots.add((fac_idx, day_idx, period_idx))
         used_room_slots.add((room_idx, day_idx, period_idx))
         placement[code] = (fac_idx, room_idx, day_idx, period_idx)
+        faculty_loads[fac_idx] += subject.units
         tstart, tend = PERIODS[period_idx]
         slots = created_rooms[room_idx].capacity
         schedule_defs.append((code, fac_idx, room_idx, DAYS[day_idx], tstart, tend, slots))
@@ -389,6 +432,13 @@ def create_term_with_schedules(term_name, term_number, is_active, schedule_defs)
         )
         created_schedules.append(sched)
 
+    for faculty in created_faculty:
+        load = faculty.current_load(term)
+        if load > faculty.max_teaching_load:
+            raise RuntimeError(
+                f"Faculty {faculty.full_name} is overloaded at {load} units for {term.term_name}"
+            )
+
     print(f"  ✓ {len(schedule_defs)} schedules created/verified for {term.term_name}")
     return term, created_schedules
 
@@ -411,7 +461,7 @@ def _find_free_slots(term):
                 free.append((day_idx, period_idx))
     return free
 
-def add_extra_sections(term, subject_codes, faculty_indices, room_indices, free_slots):
+def add_extra_sections(term, subject_codes, faculty_indices, room_indices, free_slots, faculty_loads):
     """Create an extra section for each given subject using free slots."""
     if not free_slots:
         print(f"  ⚠ No free slots available for extra sections in {term.term_name}")
@@ -424,7 +474,11 @@ def add_extra_sections(term, subject_codes, faculty_indices, room_indices, free_
         day_idx, period_idx = free_slots[idx]
         day = DAYS[day_idx]
         tstart, tend = PERIODS[period_idx]
-        fac = created_faculty[faculty_indices[idx % len(faculty_indices)]]
+        candidate_indices = [idx for idx in faculty_indices if idx < len(created_faculty)]
+        if not candidate_indices:
+            raise RuntimeError(f"No faculty available for extra section {subj.subject_code}")
+        fac_idx = _select_faculty_for_subject(subj, candidate_indices, faculty_loads)
+        fac = created_faculty[fac_idx]
         room = created_rooms[room_indices[idx % len(room_indices)]]
         slots = room.capacity
         sched, _ = Schedule.objects.get_or_create(
@@ -437,6 +491,7 @@ def add_extra_sections(term, subject_codes, faculty_indices, room_indices, free_
             time_end=tend,
             defaults={"total_slots": slots, "available_slots": slots}
         )
+        faculty_loads[fac_idx] += subj.units
         extra_scheds.append(sched)
     print(f"  ✓ Added {len(extra_scheds)} extra sections for {term.term_name}")
 
@@ -448,9 +503,13 @@ term2_codes = [code for code, _, _, _, _, tn in subjects_data if tn == 2]
 term3_codes = [code for code, _, _, _, _, tn in subjects_data if tn == 3]
 
 # Generate primary schedules for all terms
-schedule_defs_term1 = auto_schedule_term(term1_codes, len(created_faculty), len(created_rooms))
-schedule_defs_term2 = auto_schedule_term(term2_codes, len(created_faculty), len(created_rooms))
-schedule_defs_term3 = auto_schedule_term(term3_codes, len(created_faculty), len(created_rooms))
+term1_faculty_loads = {idx: 0 for idx in range(len(created_faculty))}
+term2_faculty_loads = {idx: 0 for idx in range(len(created_faculty))}
+term3_faculty_loads = {idx: 0 for idx in range(len(created_faculty))}
+
+schedule_defs_term1 = auto_schedule_term(term1_codes, len(created_faculty), len(created_rooms), term1_faculty_loads)
+schedule_defs_term2 = auto_schedule_term(term2_codes, len(created_faculty), len(created_rooms), term2_faculty_loads)
+schedule_defs_term3 = auto_schedule_term(term3_codes, len(created_faculty), len(created_rooms), term3_faculty_loads)
 
 term1, _ = create_term_with_schedules("AY 2025-2026 Term 1", 1, False, schedule_defs_term1)
 term2, _ = create_term_with_schedules("AY 2025-2026 Term 2", 2, False, schedule_defs_term2)
@@ -465,9 +524,9 @@ free_term1 = _find_free_slots(term1)
 free_term2 = _find_free_slots(term2)
 free_term3 = _find_free_slots(term3)
 
-add_extra_sections(term1, extra_subjects, extra_faculty, extra_rooms, free_term1)
-add_extra_sections(term2, extra_subjects, extra_faculty, extra_rooms, free_term2)
-add_extra_sections(term3, extra_subjects, extra_faculty, extra_rooms, free_term3)
+add_extra_sections(term1, extra_subjects, extra_faculty, extra_rooms, free_term1, term1_faculty_loads)
+add_extra_sections(term2, extra_subjects, extra_faculty, extra_rooms, free_term2, term2_faculty_loads)
+add_extra_sections(term3, extra_subjects, extra_faculty, extra_rooms, free_term3, term3_faculty_loads)
 
 print("\n✅ Seed complete! Login credentials:")
 print("   Admin:    admin   / admin1234   → /admin/")

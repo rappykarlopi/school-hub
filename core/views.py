@@ -429,15 +429,26 @@ def add_to_cart(request, schedule_id):
         return redirect("subject_list")
 
     # ── Unit cap check ──────────────────────────────────────────────────
-    # Compute current cart total (excluding the subject we're about to add)
+    confirmed_units_total = sum(
+        e.schedule.subject.units
+        for e in Enrollment.objects.filter(
+            student=student,
+            term=term,
+            status=Enrollment.Status.CONFIRMED,
+        ).select_related("schedule__subject")
+    )
     current_cart_total = sum(
         e.schedule.subject.units
         for e in Enrollment.objects.filter(student=student, term=term, status=Enrollment.Status.CART)
         .select_related("schedule__subject")
     )
-    new_total = current_cart_total + schedule.subject.units
+    new_total = confirmed_units_total + current_cart_total + schedule.subject.units
     if new_total > MAX_UNITS:
-        error_msg = f"Exceeded Maximum Unit of {MAX_UNITS}. Reduce units. (Current: {current_cart_total} + {schedule.subject.units} = {new_total})"
+        error_msg = (
+            f"Exceeded Maximum Unit of {MAX_UNITS}. Reduce units. "
+            f"(Confirmed: {confirmed_units_total}, Cart: {current_cart_total}, "
+            f"New: {schedule.subject.units}, Total: {new_total})"
+        )
         if _wants_json(request):
             return _json_error(error_msg, status=400)
         messages.error(request, error_msg)
@@ -546,11 +557,20 @@ def confirm_enlistment(request):
         return redirect("student_dashboard")
 
     # ── Unit cap check ──────────────────────────────────────────────────
+    confirmed_units_total = sum(
+        item.schedule.subject.units
+        for item in Enrollment.objects.filter(
+            student=student,
+            schedule__term=term,
+            status=Enrollment.Status.CONFIRMED,
+        ).select_related("schedule__subject")
+    )
     total_cart_units = sum(item.schedule.subject.units for item in cart_items)
-    if total_cart_units > MAX_UNITS:
+    total_units_with_confirmed = confirmed_units_total + total_cart_units
+    if total_units_with_confirmed > MAX_UNITS:
         messages.error(
             request,
-            f"Cannot confirm enlistment: total units ({total_cart_units}) exceed the maximum of {MAX_UNITS}. "
+            f"Cannot confirm enlistment: total units ({total_units_with_confirmed}) exceed the maximum of {MAX_UNITS}. "
             "Remove some subjects from your cart and try again."
         )
         return redirect("student_dashboard")
